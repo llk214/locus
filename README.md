@@ -1,176 +1,134 @@
-# Semantic Page Locator for Course PDFs
+# 📚 Semantic Page Locator
 
-A hybrid BM25 + semantic search system to find which pages in your course materials answer a given question.
+**Find the exact page that answers your question.**
 
-## Quick Start
+A lightweight desktop tool for students to search through course PDFs using natural language. Type a question like *"What is the Bellman equation?"* and instantly get the page numbers where it's explained.
 
-### 1. Install Dependencies
+![Python](https://img.shields.io/badge/Python-3.8+-blue.svg)
+![Platform](https://img.shields.io/badge/Platform-Windows%20|%20macOS%20|%20Linux-lightgrey.svg)
+![License](https://img.shields.io/badge/License-MIT-green.svg)
+
+---
+
+## ✨ Features
+
+- **Hybrid Search** — Combines keyword matching (BM25) with meaning-based ranking
+- **Works Offline** — No internet needed after initial setup
+- **Lightweight** — Runs smoothly on 4GB laptops
+- **Open PDF at Page** — Double-click a result to jump directly to that page
+- **Adjustable Search Mode** — Slider to balance between semantic and literal matching
+
+---
+
+## 🚀 Quick Start
+
+### 1. Install
 
 ```bash
-# Create virtual environment (recommended)
-python -m venv venv
-venv\Scripts\activate  # Windows
-# source venv/bin/activate  # Linux/Mac
+# Clone the repo
+git clone https://github.com/llk214/semantic-locator.git
+cd semantic-locator
 
-# Install requirements
+# Install dependencies
 pip install -r requirements.txt
 ```
 
-### 2. Organize Your PDFs
+### 2. Run
 
-Put all your course PDFs in a single directory:
-```
-D:\NUS\EE3703\materials\
-├── RL_lecture.pdf
-├── Tutorial_1.pdf
-├── Tutorial_2.pdf
-└── ...
-```
-
-### 3. Run the Locator
-
-**Option A: GUI (easiest)**
 ```bash
 python gui.py
 ```
-Then browse to your PDF directory and click "Load/Rebuild Index".
 
-**Option B: Command Line**
-```bash
-# Interactive mode
-python locator.py "D:\NUS\EE3703\materials" -i
+### 3. Use
 
-# Single query
-python locator.py "D:\NUS\EE3703\materials" -q "What is the Bellman equation?"
+1. Click **Browse** and select a folder containing your PDFs
+2. Click **Load/Rebuild Index** (first time takes ~30 seconds)
+3. Type your question and hit **Search**
+4. Double-click any result to open the PDF at that page
 
-# More results
-python locator.py "D:\NUS\EE3703\materials" -q "policy gradient" --top-k 10
-```
+---
 
-## How It Works
+## 🎛️ Search Quality Options
 
-```
-Query: "What is the Bellman equation?"
-         │
-         ▼
-┌─────────────────────────┐
-│  Stage 1: BM25 Search   │  Fast keyword matching
-│  (top 20 candidates)    │  No ML model needed
-└──────────┬──────────────┘
-           │
-           ▼
-┌─────────────────────────┐
-│  Stage 2: Reranking     │  Semantic similarity
-│  (MiniLM transformer)   │  Understands meaning
-└──────────┬──────────────┘
-           │
-           ▼
-    Results: Page 49-50
-    (with confidence scores)
-```
+Choose based on your hardware:
 
-## Fine-Tuning (Optional)
+| Option | Download Size | RAM Needed | Best For |
+|--------|---------------|------------|----------|
+| ⚡ Fast | ~80MB | 4GB | Older laptops |
+| ⚖️ Balanced | ~420MB | 8GB | Most users |
+| 🎯 High Accuracy | ~440MB | 8GB | Better results |
+| 🚀 Best | ~1.3GB | 16GB+ | Gaming PCs |
 
-To improve results for your specific courses:
+---
 
-### 1. Create Training Data
+## 🎚️ Search Mode Slider
 
-Edit `training_data_example.json` with your own question→page mappings:
-
-```json
-[
-    {
-        "question": "What is the Bellman equation?",
-        "pdf": "RL_lecture.pdf",
-        "pages": [49, 50]
-    },
-    ...
-]
-```
-
-Aim for ~50 examples covering different topics.
-
-### 2. Run Fine-Tuning
-
-```python
-from locator import HybridLocator, TrainingDataGenerator, fine_tune_reranker
-
-# Load locator
-locator = HybridLocator("D:/NUS/EE3703/materials")
-locator.build_index()
-
-# Load training data
-training_data = TrainingDataGenerator.from_json("training_data.json")
-
-# Fine-tune (saves to ./fine_tuned_model/)
-fine_tune_reranker(locator, training_data, "./fine_tuned_model", epochs=3)
-```
-
-### 3. Use Fine-Tuned Model
-
-```python
-locator = HybridLocator(
-    "D:/NUS/EE3703/materials",
-    model_name="./fine_tuned_model"
-)
-```
-
-## API Usage
-
-```python
-from locator import HybridLocator
-
-# Initialize
-locator = HybridLocator("D:/NUS/EE3703/materials")
-locator.build_index()  # First time takes ~30s, cached after
-
-# Search
-results = locator.search("What is Q-learning?", top_k=5)
-
-for r in results:
-    print(f"{r['pdf_name']} - Page {r['page_num']} (score: {r['score']})")
-    print(f"  {r['snippet']}")
-```
-
-## Configuration Options
-
-| Parameter | Default | Description |
-|-----------|---------|-------------|
-| `top_k` | 5 | Number of results to return |
-| `bm25_candidates` | 20 | Candidates from BM25 stage |
-| `bm25_weight` | 0.3 | Weight for keyword matching (0-1) |
-
-- Higher `bm25_weight` = favors exact keyword matches
-- Lower `bm25_weight` = favors semantic similarity
-
-## Performance Tips
-
-1. **First run is slow** - The model downloads (~80MB) and PDFs are indexed
-2. **Index is cached** - Subsequent runs use `.locator_cache.pkl`
-3. **Force rebuild** - Use `--rebuild` flag if you add new PDFs
-4. **GPU acceleration** - Install CUDA-enabled PyTorch for faster reranking
-
-## Troubleshooting
-
-**"No results found"**
-- Check if PDFs have extractable text (not scanned images)
-- Try broader search terms
-
-**Slow performance**
-- Reduce `bm25_candidates` for faster (but less accurate) results
-- Use GPU if available
-
-**Memory issues**
-- Process fewer PDFs at once
-- The model uses ~500MB RAM
-
-## File Structure
+Adjust how search works:
 
 ```
-semantic_locator/
-├── locator.py              # Main search engine
-├── gui.py                  # tkinter GUI
-├── requirements.txt        # Dependencies
-├── training_data_example.json  # Template for fine-tuning
-└── README.md
+🧠 Semantic ◀━━━━━━━━━━▶ 🔤 Literal
 ```
+
+| Slide Left | Slide Right |
+|------------|-------------|
+| Understands meaning | Matches exact words |
+| *"How does learning from experience work?"* | *"Bellman equation"* |
+
+---
+
+## 📁 Supported Files
+
+- ✅ PDF (`.pdf`)
+
+> **Tip:** Export your `.pptx` and `.docx` files to PDF for best results
+
+---
+
+## 🛠️ Requirements
+
+- Python 3.8+
+- ~500MB disk space (for models)
+- PDF reader with command-line support (e.g., [SumatraPDF](https://www.sumatrapdfreader.org/))
+
+---
+
+## 📦 Dependencies
+
+```
+PyMuPDF          # PDF text extraction
+rank-bm25        # Keyword search
+sentence-transformers  # Semantic matching
+```
+
+---
+
+## 💡 Tips for Better Results
+
+1. **Add student notes** — Well-organized notes with clear headings improve search quality
+2. **Use specific terms** — *"Q-learning update rule"* works better than *"how does it learn"*
+3. **Adjust the slider** — Use literal mode for exact terms, semantic mode for concepts
+
+---
+
+## 🤔 FAQ
+
+**Is this an AI/LLM?**  
+No. It uses embedding models for similarity matching, not generative AI. It finds information — it doesn't generate answers.
+
+**Can I use this during exams?**  
+If "no LLM" is the rule, this tool is fine — it's just a smart search engine for your own materials.
+
+**Why doesn't the page jump work?**  
+Install [SumatraPDF](https://www.sumatrapdfreader.org/) — it has the best command-line page navigation support.
+
+---
+
+## 📄 License
+
+MIT — free for personal and educational use.
+
+---
+
+<p align="center">
+  Made for students, by students 📖
+</p>
