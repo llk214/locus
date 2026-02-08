@@ -4,7 +4,29 @@ Uses customtkinter for iOS-style rounded corners
 """
 
 import sys
+import os
 import io
+
+# Suppress HuggingFace symlink warning on Windows
+os.environ["HF_HUB_DISABLE_SYMLINKS_WARNING"] = "1"
+
+# ----------------------------
+# FastEmbed cache configuration
+# ----------------------------
+from pathlib import Path
+
+def _default_fastembed_cache_dir() -> str:
+    """Choose a persistent cache directory for FastEmbed (avoid system Temp)."""
+    home = str(Path.home())
+    if os.name == "nt":
+        base = os.environ.get("LOCALAPPDATA") or home
+        return os.path.join(base, "Locus", "fastembed_cache")
+    if sys.platform == "darwin":
+        return os.path.join(home, "Library", "Caches", "Locus", "fastembed_cache")
+    return os.path.join(home, ".cache", "Locus", "fastembed_cache")
+
+os.environ.setdefault("FASTEMBED_CACHE_PATH", _default_fastembed_cache_dir())
+os.makedirs(os.environ["FASTEMBED_CACHE_PATH"], exist_ok=True)
 
 # Fix for PyInstaller + sentence-transformers (isatty error)
 if getattr(sys, 'frozen', False):
@@ -122,12 +144,37 @@ ctk.set_appearance_mode("system")  # "light", "dark", or "system"
 ctk.set_default_color_theme("blue")  # "blue", "green", "dark-blue"
 
 
+def get_app_dir():
+    """Get the directory where the app is running from."""
+    if getattr(sys, 'frozen', False):
+        # Running as compiled exe
+        return os.path.dirname(sys.executable)
+    else:
+        # Running as script
+        return os.path.dirname(os.path.abspath(__file__))
+
+
 def open_pdf_at_page(pdf_path: str, page_num: int):
-    """Open PDF at specific page using system default viewer."""
+    """Open PDF at specific page using bundled or system PDF viewer."""
     system = platform.system()
     pdf_path = os.path.abspath(pdf_path)
     
     if system == "Windows":
+        # Check for bundled SumatraPDF (multiple possible locations)
+        app_dir = get_app_dir()
+        bundled_sumatra_paths = [
+            os.path.join(app_dir, "_internal", "SumatraPDF", "SumatraPDF.exe"),
+            os.path.join(app_dir, "_internal", "SumatraPDF.exe"),
+            os.path.join(app_dir, "SumatraPDF", "SumatraPDF.exe"),
+            os.path.join(app_dir, "SumatraPDF.exe"),
+        ]
+        
+        for sumatra in bundled_sumatra_paths:
+            if os.path.exists(sumatra):
+                subprocess.Popen([sumatra, "-page", str(page_num), pdf_path])
+                return True
+        
+        # Fall back to system-installed SumatraPDF
         sumatra_paths = [
             r"C:\Program Files\SumatraPDF\SumatraPDF.exe",
             r"C:\Program Files (x86)\SumatraPDF\SumatraPDF.exe",
@@ -364,23 +411,24 @@ class LocatorGUI(ctk.CTk):
         
         ctk.CTkLabel(left_options, text="Quality:", font=("Segoe UI", 11)).pack(side="left", padx=(0, 4))
         
+        # Bundled model name (included with app, no download needed)
+        self.bundled_model = "BAAI/bge-small-en-v1.5"
+        
         self.quality_options = {
-            "⚡ Fast": "sentence-transformers/all-MiniLM-L6-v2",
             "⚖️ Balanced": "BAAI/bge-small-en-v1.5", 
             "🎯 High Accuracy": "BAAI/bge-base-en-v1.5",
             "🚀 Best": "BAAI/bge-large-en-v1.5",
-            "🌍 Multilingual": "BAAI/bge-m3"
+            "🌍 Multilingual": "intfloat/multilingual-e5-large"
         }
         
         self.quality_sizes = {
-            "⚡ Fast": "80MB",
-            "⚖️ Balanced": "130MB", 
-            "🎯 High Accuracy": "440MB",
-            "🚀 Best": "1.3GB",
+            "⚖️ Balanced": "Built-in", 
+            "🎯 High Accuracy": "210MB",
+            "🚀 Best": "1.2GB",
             "🌍 Multilingual": "2.2GB"
         }
         
-        self.quality_var = tk.StringVar(value="⚡ Fast")
+        self.quality_var = tk.StringVar(value="⚖️ Balanced")
         self.quality_menu = ctk.CTkOptionMenu(left_options, variable=self.quality_var,
                                                values=list(self.quality_options.keys()),
                                                width=145, height=26, corner_radius=6,
@@ -459,7 +507,6 @@ class LocatorGUI(ctk.CTk):
     
     def _on_quality_change(self, choice):
         info_map = {
-            "⚡ Fast": "4GB RAM",
             "⚖️ Balanced": "4GB RAM",
             "🎯 High Accuracy": "8GB RAM",
             "🚀 Best": "16GB RAM",
@@ -471,18 +518,97 @@ class LocatorGUI(ctk.CTk):
         if self.locator:
             self.status_var.set("Quality changed - click 'Load Index' to apply")
     
-    def _is_model_downloaded(self, model_name):
-        """Check if model exists in HuggingFace cache."""
-        import os
-        cache_dir = os.path.expanduser("~/.cache/huggingface/hub")
-        if not os.path.exists(cache_dir):
-            return False
+    def _get_fastembed_cache_locations(self):
+        """Get FastEmbed cache locations (current + legacy)."""
+        import tempfile
+
+        locations = []
+
+        # Preferred: app-managed persistent cache
+        env_path = os.environ.get("FASTEMBED_CACHE_PATH")
+        if env_path:
+            locations.append(env_path)
+
+        # Legacy / fallback locations (in case user already downloaded models there)
+        temp_dir = tempfile.gettempdir()
+        locations.append(os.path.join(temp_dir, "fastembed_cache"))
+
+        if os.name == "nt":
+            localappdata = os.environ.get("LOCALAPPDATA", "")
+            if localappdata:
+                locations.append(os.path.join(localappdata, "Temp", "fastembed_cache"))
+            temp_env = os.environ.get("TEMP", "")
+            if temp_env:
+                locations.append(os.path.join(temp_env, "fastembed_cache"))
+
+        locations.append(os.path.expanduser("~/.cache/fastembed_cache"))
+
+        # Remove duplicates while preserving order
+        seen = set()
+        unique_locations = []
+        for loc in locations:
+            normalized = os.path.normpath(loc)
+            if normalized and normalized not in seen:
+                seen.add(normalized)
+                unique_locations.append(normalized)
+
+        return unique_locations
+    
+    def _is_bundled_model(self, model_name):
+        """Check if model is the bundled one."""
+        return model_name == self.bundled_model
+    
+    def _get_bundled_model_path(self):
+        """Get path to bundled model if it exists."""
+        if getattr(sys, 'frozen', False):
+            # Running as PyInstaller exe
+            base_path = getattr(sys, '_MEIPASS', os.path.dirname(sys.executable))
+            possible_paths = [
+                os.path.join(base_path, '_internal', 'models', 'bge-small-en-v1.5'),
+                os.path.join(base_path, 'models', 'bge-small-en-v1.5'),
+                os.path.join(os.path.dirname(sys.executable), '_internal', 'models', 'bge-small-en-v1.5'),
+                os.path.join(os.path.dirname(sys.executable), 'models', 'bge-small-en-v1.5'),
+            ]
+        else:
+            # Running as script
+            script_dir = os.path.dirname(os.path.abspath(__file__))
+            possible_paths = [
+                os.path.join(script_dir, 'models', 'bge-small-en-v1.5'),
+            ]
         
-        # Convert model name to cache folder format
-        # e.g., "sentence-transformers/all-MiniLM-L6-v2" -> "models--sentence-transformers--all-MiniLM-L6-v2"
-        model_folder = "models--" + model_name.replace("/", "--")
-        model_path = os.path.join(cache_dir, model_folder)
-        return os.path.exists(model_path)
+        for path in possible_paths:
+            if os.path.exists(path):
+                for root, dirs, files in os.walk(path):
+                    if 'model.onnx' in files or 'model_optimized.onnx' in files:
+                        return path
+        return None
+    
+    def _is_model_downloaded(self, model_name):
+        """Check if model exists in FastEmbed cache or is bundled."""
+        # Bundled model is always available
+        if self._is_bundled_model(model_name) and self._get_bundled_model_path():
+            return True
+        
+        # FastEmbed uses format like "models--qdrant--bge-small-en-v1.5-onnx"
+        model_short = model_name.split("/")[-1]  # e.g., "bge-small-en-v1.5"
+        
+        for cache_dir in self._get_fastembed_cache_locations():
+            if not os.path.exists(cache_dir):
+                continue
+            
+            try:
+                for folder in os.listdir(cache_dir):
+                    # Check various naming patterns FastEmbed might use
+                    if model_short in folder or model_short.replace("-", "_") in folder:
+                        folder_path = os.path.join(cache_dir, folder)
+                        # Check if model.onnx exists (actual model file)
+                        for root, dirs, files in os.walk(folder_path):
+                            if 'model.onnx' in files or 'model_optimized.onnx' in files:
+                                return True
+            except (PermissionError, OSError):
+                continue
+        
+        return False
     
     def _update_model_status(self):
         """Update the download status indicator and action button."""
@@ -490,14 +616,23 @@ class LocatorGUI(ctk.CTk):
         model_name = self.quality_options.get(quality)
         size = self.quality_sizes.get(quality, "")
         
+        # Check if it's the bundled model
+        is_bundled = self._is_bundled_model(model_name)
+        
         if self._is_model_downloaded(model_name):
-            self.quality_status_var.set("✅")
-            self.quality_status_label.configure(text_color="green")
-            self.model_action_btn.configure(text="🗑️", command=self._delete_current_model)
+            if is_bundled:
+                self.quality_status_var.set("📦")  # Package icon for bundled
+                self.quality_status_label.configure(text_color="blue")
+                # Don't allow deleting bundled model
+                self.model_action_btn.configure(text="📦", command=lambda: None, state="disabled")
+            else:
+                self.quality_status_var.set("✅")
+                self.quality_status_label.configure(text_color="green")
+                self.model_action_btn.configure(text="🗑️", command=self._delete_current_model, state="normal")
         else:
             self.quality_status_var.set(f"⬇️ {size}")
             self.quality_status_label.configure(text_color="orange")
-            self.model_action_btn.configure(text="⬇️", command=self._download_model)
+            self.model_action_btn.configure(text="⬇️", command=self._download_model, state="normal")
     
     def _delete_current_model(self):
         """Delete the currently selected model."""
@@ -518,6 +653,7 @@ class LocatorGUI(ctk.CTk):
         
         if self._is_model_downloaded(model_name):
             self.status_var.set(f"✅ {quality} model already downloaded")
+            self._update_model_status()
             return
         
         # Animation flag
@@ -529,7 +665,7 @@ class LocatorGUI(ctk.CTk):
             frames = ["⬇️ Downloading", "⬇️ Downloading.", "⬇️ Downloading..", "⬇️ Downloading..."]
             i = 0
             while self._downloading:
-                self.status_var.set(f"{frames[i % 4]} {quality} ({model_size})")
+                self.after(0, lambda f=frames[i % 4]: self.status_var.set(f"{f} {quality} ({model_size})"))
                 i += 1
                 time.sleep(0.4)
         
@@ -539,144 +675,150 @@ class LocatorGUI(ctk.CTk):
                 anim_thread = threading.Thread(target=animate_status, daemon=True)
                 anim_thread.start()
                 
-                # Download the model
-                from sentence_transformers import SentenceTransformer
-                SentenceTransformer(model_name)
+                self.after(0, lambda: self.status_var.set(f"⬇️ Initializing download for {quality}..."))
+                
+                # Download the model using FastEmbed
+                # FastEmbed automatically downloads from HuggingFace when model not cached
+                from fastembed import TextEmbedding
+                
+                self.after(0, lambda: self.status_var.set(f"⬇️ Downloading {quality} ({model_size})..."))
+                
+                # This triggers the download
+                cache_dir = os.environ.get("FASTEMBED_CACHE_PATH")
+                model = TextEmbedding(model_name=model_name, cache_dir=cache_dir)
+                
+                self.after(0, lambda: self.status_var.set(f"⬇️ Verifying {quality} model..."))
+                
+                # Run a dummy embed to ensure model is fully loaded and working
+                list(model.embed(["test"]))
                 
                 # Stop animation
                 self._downloading = False
                 
-                # Update UI
-                self._update_model_status()
-                self.status_var.set(f"✅ Downloaded {quality} model successfully!")
+                # Update UI on main thread
+                self.after(0, self._update_model_status)
+                self.after(0, lambda: self.status_var.set(f"✅ Downloaded {quality} model successfully!"))
                 
             except Exception as e:
                 self._downloading = False
-                self.status_var.set(f"❌ Download failed: {e}")
-                messagebox.showerror("Download Error", str(e))
+                error_msg = str(e)
+                print(f"Download error: {error_msg}")  # Console logging
+                self.after(0, lambda: self.status_var.set(f"❌ Download failed: {error_msg[:50]}..."))
+                self.after(0, lambda: messagebox.showerror("Download Error", 
+                    f"Failed to download {quality} model.\n\nError: {error_msg}\n\n"
+                    "Please check your internet connection and try again."))
         
-        thread = threading.Thread(target=download)
+        thread = threading.Thread(target=download, daemon=True)
         thread.start()
     
     def _get_download_progress(self, model_name):
-        """Get current download progress in MB by checking HuggingFace download locations."""
-        import tempfile
-        
-        # Check multiple possible locations where HuggingFace downloads
-        cache_dir = os.path.expanduser("~/.cache/huggingface/hub")
-        model_folder = "models--" + model_name.replace("/", "--")
-        model_path = os.path.join(cache_dir, model_folder)
-        
+        """Get current download progress in MB by checking FastEmbed download locations."""
         total_size = 0
+        model_short = model_name.split("/")[-1]
         
-        # 1. Check the model cache directory
-        if os.path.exists(model_path):
-            for dirpath, dirnames, filenames in os.walk(model_path):
-                for f in filenames:
-                    fp = os.path.join(dirpath, f)
-                    try:
-                        total_size += os.path.getsize(fp)
-                    except:
-                        pass
-        
-        # 2. Check HuggingFace temp download directory
-        hf_temp = os.path.join(cache_dir, ".tmp")
-        if os.path.exists(hf_temp):
-            for dirpath, dirnames, filenames in os.walk(hf_temp):
-                for f in filenames:
-                    fp = os.path.join(dirpath, f)
-                    try:
-                        total_size += os.path.getsize(fp)
-                    except:
-                        pass
-        
-        # 3. Check system temp for any huggingface downloads
-        temp_dir = tempfile.gettempdir()
-        for item in os.listdir(temp_dir):
-            if 'huggingface' in item.lower() or 'hf' in item.lower():
-                item_path = os.path.join(temp_dir, item)
-                try:
-                    if os.path.isfile(item_path):
-                        total_size += os.path.getsize(item_path)
-                    elif os.path.isdir(item_path):
-                        for dirpath, dirnames, filenames in os.walk(item_path):
+        for cache_dir in self._get_fastembed_cache_locations():
+            if not os.path.exists(cache_dir):
+                continue
+            
+            for folder in os.listdir(cache_dir):
+                if model_short in folder:
+                    folder_path = os.path.join(cache_dir, folder)
+                    if os.path.isdir(folder_path):
+                        for dirpath, dirnames, filenames in os.walk(folder_path):
                             for f in filenames:
                                 fp = os.path.join(dirpath, f)
                                 try:
                                     total_size += os.path.getsize(fp)
                                 except:
                                     pass
-                except:
-                    pass
         
         return total_size / (1024 * 1024)  # Convert to MB
     
     def _get_model_cache_size(self, model_name):
         """Get the size of a fully cached model in MB."""
-        cache_dir = os.path.expanduser("~/.cache/huggingface/hub")
-        model_folder = "models--" + model_name.replace("/", "--")
-        model_path = os.path.join(cache_dir, model_folder)
-        
-        if not os.path.exists(model_path):
-            return 0
-        
         total_size = 0
-        for dirpath, dirnames, filenames in os.walk(model_path):
-            for f in filenames:
-                fp = os.path.join(dirpath, f)
-                try:
-                    total_size += os.path.getsize(fp)
-                except:
-                    pass
+        model_short = model_name.split("/")[-1]
+        
+        for cache_dir in self._get_fastembed_cache_locations():
+            if not os.path.exists(cache_dir):
+                continue
+            
+            for folder in os.listdir(cache_dir):
+                if model_short in folder:
+                    folder_path = os.path.join(cache_dir, folder)
+                    if os.path.isdir(folder_path):
+                        for dirpath, dirnames, filenames in os.walk(folder_path):
+                            for f in filenames:
+                                fp = os.path.join(dirpath, f)
+                                try:
+                                    total_size += os.path.getsize(fp)
+                                except:
+                                    pass
         
         return total_size / (1024 * 1024)  # Convert to MB
     
     def _delete_model(self, model_name):
-        """Delete a cached model."""
+        """Delete a cached model from FastEmbed cache (current + legacy)."""
         import shutil
-        cache_dir = os.path.expanduser("~/.cache/huggingface/hub")
-        model_folder = "models--" + model_name.replace("/", "--")
-        model_path = os.path.join(cache_dir, model_folder)
-        
-        if os.path.exists(model_path):
-            shutil.rmtree(model_path)
-            return True
-        return False
+        deleted = False
+
+        model_short = model_name.split("/")[-1]
+
+        for cache_dir in self._get_fastembed_cache_locations():
+            if not os.path.exists(cache_dir):
+                continue
+
+            try:
+                for folder in os.listdir(cache_dir):
+                    # FastEmbed/HF-style folder names include the model name in some form
+                    if model_short in folder or model_short.replace("-", "_") in folder:
+                        folder_path = os.path.join(cache_dir, folder)
+                        try:
+                            shutil.rmtree(folder_path, ignore_errors=False)
+                            deleted = True
+                        except PermissionError:
+                            shutil.rmtree(folder_path, ignore_errors=True)
+                            deleted = True
+            except (PermissionError, OSError):
+                continue
+
+        return deleted
     
     def _manage_models(self):
         """Show dialog to manage downloaded models."""
         dialog = ctk.CTkToplevel(self)
         dialog.title("Manage Models")
-        dialog.geometry("400x350")
+        dialog.geometry("400x300")
         dialog.transient(self)
         dialog.grab_set()
+        dialog.resizable(False, False)
         
         # Center the dialog
         dialog.update_idletasks()
         x = self.winfo_x() + (self.winfo_width() - 400) // 2
-        y = self.winfo_y() + (self.winfo_height() - 350) // 2
+        y = self.winfo_y() + (self.winfo_height() - 300) // 2
         dialog.geometry(f"+{x}+{y}")
         
         ctk.CTkLabel(dialog, text="Downloaded Models", font=("Segoe UI", 14, "bold")).pack(pady=(15, 10))
         
-        # Scrollable frame for model list
-        models_frame = ctk.CTkScrollableFrame(dialog, height=180)
+        # Fixed frame for model list (no scrolling needed for 5 models)
+        models_frame = ctk.CTkFrame(dialog, fg_color="transparent")
         models_frame.pack(fill="x", padx=15, pady=5)
         
         model_names = {
-            "⚡ Fast": "sentence-transformers/all-MiniLM-L6-v2",
             "⚖️ Balanced": "BAAI/bge-small-en-v1.5", 
             "🎯 High Accuracy": "BAAI/bge-base-en-v1.5",
             "🚀 Best": "BAAI/bge-large-en-v1.5",
-            "🌍 Multilingual": "BAAI/bge-m3"
+            "🌍 Multilingual": "intfloat/multilingual-e5-large"
         }
         
         any_downloaded = False
         
         for display_name, model_name in model_names.items():
+            is_bundled = self._is_bundled_model(model_name)
+            
             if self._is_model_downloaded(model_name):
                 any_downloaded = True
-                size_mb = self._get_model_cache_size(model_name)
                 
                 row = ctk.CTkFrame(models_frame, fg_color="transparent")
                 row.pack(fill="x", pady=2)
@@ -684,34 +826,44 @@ class LocatorGUI(ctk.CTk):
                 ctk.CTkLabel(row, text=f"{display_name}", font=("Segoe UI", 11),
                             anchor="w", width=120).pack(side="left", padx=(0, 10))
                 
-                ctk.CTkLabel(row, text=f"{size_mb:.0f} MB", font=("Segoe UI", 10),
-                            text_color="gray", width=60).pack(side="left")
-                
-                def make_delete_callback(mn=model_name, dn=display_name, r=row):
-                    def callback():
-                        if messagebox.askyesno("Delete Model", 
-                                              f"Delete {dn}?\nYou'll need to re-download it to use this quality level."):
-                            self._delete_model(mn)
-                            r.destroy()
-                            self._update_model_status()
-                            self.status_var.set(f"Deleted {dn} model")
-                    return callback
-                
-                ctk.CTkButton(row, text="Delete", width=60, height=24, corner_radius=4,
-                             fg_color="#dc3545", hover_color="#c82333",
-                             command=make_delete_callback()).pack(side="right")
+                if is_bundled:
+                    ctk.CTkLabel(row, text="Built-in", font=("Segoe UI", 10),
+                                text_color="blue", width=60).pack(side="left")
+                    # No delete button for bundled model
+                    ctk.CTkLabel(row, text="📦", font=("Segoe UI", 10),
+                                width=60).pack(side="right")
+                else:
+                    size_mb = self._get_model_cache_size(model_name)
+                    ctk.CTkLabel(row, text=f"{size_mb:.0f} MB", font=("Segoe UI", 10),
+                                text_color="gray", width=60).pack(side="left")
+                    
+                    def make_delete_callback(mn=model_name, dn=display_name, r=row):
+                        def callback():
+                            if messagebox.askyesno("Delete Model", 
+                                                  f"Delete {dn}?\nYou'll need to re-download it to use this quality level."):
+                                self._delete_model(mn)
+                                r.destroy()
+                                self._update_model_status()
+                                self.status_var.set(f"Deleted {dn} model")
+                        return callback
+                    
+                    ctk.CTkButton(row, text="Delete", width=60, height=24, corner_radius=4,
+                                 fg_color="#dc3545", hover_color="#c82333",
+                                 command=make_delete_callback()).pack(side="right")
         
         if not any_downloaded:
             ctk.CTkLabel(models_frame, text="No models downloaded yet", 
                         font=("Segoe UI", 11), text_color="gray").pack(pady=20)
         
-        # Total size
-        total_size = sum(self._get_model_cache_size(m) for m in model_names.values())
-        ctk.CTkLabel(dialog, text=f"Total: {total_size:.0f} MB", 
-                    font=("Segoe UI", 10), text_color="gray").pack(pady=5)
+        # Total size (exclude bundled from count)
+        total_size = sum(self._get_model_cache_size(m) for m in model_names.values() 
+                        if not self._is_bundled_model(m))
+        ctk.CTkLabel(dialog, text=f"Downloaded: {total_size:.0f} MB", 
+                    font=("Segoe UI", 10), text_color="gray").pack(pady=(10, 5))
         
+        # Close button at bottom
         ctk.CTkButton(dialog, text="Close", command=dialog.destroy,
-                     width=80, height=28, corner_radius=6).pack(pady=10)
+                     width=80, height=28, corner_radius=6).pack(pady=(5, 15))
         
         if self.locator:
             self.status_var.set("Quality changed - click 'Load Index' to apply")
@@ -786,26 +938,37 @@ class LocatorGUI(ctk.CTk):
     
     def _do_load_index(self, pdf_dir, model_name, quality, precompute=False):
         """Actually load the index with chosen mode."""
+        def update_progress(current, total):
+            """Callback to update status with progress."""
+            percent = int(current / total * 100)
+            self.after(0, lambda: self.status_var.set(
+                f"🔬 Deep indexing: {current}/{total} pages ({percent}%)"
+            ))
+        
         def load():
             try:
-                self.status_var.set("Loading model...")
+                self.after(0, lambda: self.status_var.set("Step 1/2: Loading model..."))
                 self.locator = HybridLocator(pdf_dir, model_name=model_name)
                 
                 if precompute:
-                    self.status_var.set("Indexing PDF files...")
+                    self.after(0, lambda: self.status_var.set("Step 2/3: Indexing PDF files..."))
                     self.locator.build_index()
                     page_count = len(self.locator.documents)
-                    self.status_var.set(f"Computing embeddings for {page_count} pages...")
-                    self.locator.precompute_embeddings()
+                    self.after(0, lambda: self.status_var.set(
+                        f"Step 3/3: Computing embeddings (0/{page_count})..."
+                    ))
+                    self.locator.precompute_embeddings(progress_callback=update_progress)
                 else:
-                    self.status_var.set("Indexing PDF files...")
+                    self.after(0, lambda: self.status_var.set("Step 2/2: Indexing PDF files..."))
                     self.locator.build_index()
                 
                 self.pdf_dir = pdf_dir
                 page_count = len(self.locator.documents)
                 mode = "Deep" if precompute else "Fast"
                 
-                self.status_var.set(f"✅ Ready! Indexed {page_count} pages ({mode} mode)")
+                self.after(0, lambda: self.status_var.set(
+                    f"✅ Ready! Indexed {page_count} pages ({mode} mode)"
+                ))
                     
             except Exception as e:
                 self.status_var.set(f"❌ Error: {e}")
