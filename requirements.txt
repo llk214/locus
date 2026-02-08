@@ -1,6 +1,6 @@
-# Core dependencies for Semantic Page Locator
+# Core dependencies for Locus PDF Search
 PyMuPDF>=1.23.0          # PDF text extraction (imported as fitz)
-rank-bm25>=0.2.2         # BM25 retrieval
-sentence-transformers>=2.2.0  # Semantic embeddings + reranking
+rank-bm25>=0.2.2         # BM25 keyword retrieval
+fastembed>=0.2.0         # Lightweight ONNX-based embeddings (replaces sentence-transformers)
 numpy>=1.24.0
-torch>=2.0.0             # Required by sentence-transformers
+customtkinter>=5.2.0     # Modern GUI
