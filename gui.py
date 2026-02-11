@@ -170,7 +170,7 @@ class LocatorGUI(ctk.CTk):
 
         if hasattr(self, 'ocr_quality_var'):
             current = self.ocr_quality_var.get()
-            new_label = t("ocr.balanced")
+            new_label = t("ocr.off")
             for key in self.ocr_quality_options.keys():
                 if current == t(key):
                     new_label = t(key)
