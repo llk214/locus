@@ -431,6 +431,18 @@ _STRINGS = {
         "en": "Downloaded Models",
         "zh": "已下载的模型",
     },
+    "fusion.label": {
+        "en": "Score Fusion",
+        "zh": "融合方式",
+    },
+    "fusion.percentile": {
+        "en": "Percentile Blend",
+        "zh": "百分位融合",
+    },
+    "fusion.rrf": {
+        "en": "RRF (Rank Fusion)",
+        "zh": "RRF（排名融合）",
+    },
     "models.builtin": {
         "en": "Built-in",
         "zh": "内置",

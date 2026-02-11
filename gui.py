@@ -132,6 +132,9 @@ class LocatorGUI(ctk.CTk):
         self._searching = False
         self._last_index_hash = None
         self._last_index_model = None
+        self._index_cancel = None
+        self._indexing = False
+        self.fusion_method = "rrf"
         
         # Track translatable widgets for language switching
         self._i18n_widgets = []
@@ -797,7 +800,8 @@ class LocatorGUI(ctk.CTk):
         
         def do_search():
             try:
-                result = self.locator.search(query, top_k=top_k, bm25_weight=bm25_weight)
+                result = self.locator.search(query, top_k=top_k, bm25_weight=bm25_weight,
+                                           fusion_method=self.fusion_method)
                 
                 if isinstance(result, tuple):
                     results, is_cross_lingual = result

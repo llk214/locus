@@ -403,6 +403,31 @@ def cosine_similarity(a: np.ndarray, b: np.ndarray) -> np.ndarray:
     return np.dot(b_norm, a_norm)
 
 
+def _percentile_normalize(scores: np.ndarray, p_low: float = 5.0, p_high: float = 95.0,
+                          eps: float = 1e-8) -> np.ndarray:
+    """Robustly normalize scores to [0,1] using percentiles with fallback."""
+    if scores.size == 0:
+        return scores
+    if scores.size < 20:
+        s_min = float(scores.min())
+        s_max = float(scores.max())
+        denom = s_max - s_min
+        if denom < eps:
+            return np.zeros_like(scores)
+        return (scores - s_min) / denom
+    p5 = float(np.percentile(scores, p_low))
+    p95 = float(np.percentile(scores, p_high))
+    denom = p95 - p5
+    if denom < eps:
+        s_min = float(scores.min())
+        s_max = float(scores.max())
+        denom2 = s_max - s_min
+        if denom2 < eps:
+            return np.zeros_like(scores)
+        return (scores - s_min) / denom2
+    return np.clip((scores - p5) / denom, 0.0, 1.0)
+
+
 class SemanticReranker:
     """FastEmbed-based semantic reranking (lightweight ONNX)."""
     
@@ -479,7 +504,8 @@ class SemanticReranker:
         return self.encode([text], is_query)[0]
     
     def rerank(self, query: str, candidates: list[tuple[PageDocument, float]], 
-               top_k: int = 5, bm25_weight: float = 0.3) -> list[tuple[PageDocument, float]]:
+               top_k: int = 5, bm25_weight: float = 0.3,
+               fusion_method: str = "rrf") -> list[tuple[PageDocument, float]]:
         """
         Rerank candidates using semantic similarity.
         
@@ -501,15 +527,26 @@ class SemanticReranker:
         
         # Compute semantic similarities
         semantic_scores = cosine_similarity(query_embedding, doc_embeddings)
-        
-        # Normalize BM25 scores
-        bm25_scores = np.array([score for _, score in candidates])
-        if bm25_scores.max() > 0:
-            bm25_scores = bm25_scores / bm25_scores.max()
-        
-        # Combine scores
-        combined_scores = (1 - bm25_weight) * semantic_scores + bm25_weight * bm25_scores
-        
+        semantic_scores = semantic_scores.astype(float)
+
+        bm25_scores = np.array([score for _, score in candidates], dtype=float)
+
+        if fusion_method == "rrf":
+            # Reciprocal Rank Fusion (RRF)
+            k = 60.0
+            sem_rank = np.argsort(semantic_scores)[::-1]
+            bm_rank = np.argsort(bm25_scores)[::-1]
+            sem_pos = np.empty_like(sem_rank)
+            bm_pos = np.empty_like(bm_rank)
+            sem_pos[sem_rank] = np.arange(1, len(sem_rank) + 1)
+            bm_pos[bm_rank] = np.arange(1, len(bm_rank) + 1)
+            combined_scores = (1.0 / (k + sem_pos)) + (1.0 / (k + bm_pos))
+        else:
+            # Percentile-normalized linear blend
+            semantic_scores = _percentile_normalize(semantic_scores)
+            bm25_scores = _percentile_normalize(bm25_scores)
+            combined_scores = (1 - bm25_weight) * semantic_scores + bm25_weight * bm25_scores
+
         # Sort by combined score
         sorted_indices = np.argsort(combined_scores)[::-1][:top_k]
         
@@ -674,7 +711,7 @@ class HybridLocator:
         print("Embeddings computed and ready!")
         
     def search(self, query: str, top_k: int = 5, bm25_candidates: int = 20,
-               bm25_weight: float = 0.3) -> tuple[list[dict], bool]:
+               bm25_weight: float = 0.3, fusion_method: str = "rrf") -> tuple[list[dict], bool]:
         """
         Search for pages relevant to the query.
         
@@ -704,7 +741,7 @@ class HybridLocator:
         
         # Deep mode: use pre-computed embeddings for full semantic search
         if self.deep_mode and self.reranker and self.doc_embeddings is not None:
-            return self._search_deep(query, top_k, bm25_weight, is_multilingual_model)
+            return self._search_deep(query, top_k, bm25_weight, is_multilingual_model, fusion_method)
         
         # Fast mode: BM25 filtering + semantic reranking
         # Stage 1: BM25 retrieval
@@ -730,7 +767,7 @@ class HybridLocator:
         # Stage 2: Semantic reranking (if model available)
         if self.reranker:
             results = self.reranker.rerank(query, candidates, top_k=top_k, 
-                                           bm25_weight=bm25_weight)
+                                           bm25_weight=bm25_weight, fusion_method=fusion_method)
         else:
             # BM25 only mode - just take top_k from BM25 results
             results = candidates[:top_k]
@@ -751,7 +788,7 @@ class HybridLocator:
         return output, is_cross_lingual
     
     def _search_deep(self, query: str, top_k: int, bm25_weight: float, 
-                     is_multilingual: bool) -> tuple[list[dict], bool]:
+                     is_multilingual: bool, fusion_method: str = "rrf") -> tuple[list[dict], bool]:
         """Deep search using pre-computed embeddings."""
         is_cross_lingual = False
         
@@ -764,16 +801,25 @@ class HybridLocator:
             is_cross_lingual = True
             bm25_weight = 0.0
         
-        # Normalize BM25 scores
-        if bm25_scores.max() > 0:
-            bm25_scores = bm25_scores / bm25_scores.max()
+        bm25_scores = bm25_scores.astype(float)
         
         # Compute semantic scores using pre-computed embeddings
         query_embedding = self.reranker.encode_single(query, is_query=True)
-        semantic_scores = cosine_similarity(query_embedding, self.doc_embeddings)
-        
-        # Combine scores
-        combined_scores = (1 - bm25_weight) * semantic_scores + bm25_weight * bm25_scores
+        semantic_scores = cosine_similarity(query_embedding, self.doc_embeddings).astype(float)
+
+        if fusion_method == "rrf":
+            k = 60.0
+            sem_rank = np.argsort(semantic_scores)[::-1]
+            bm_rank = np.argsort(bm25_scores)[::-1]
+            sem_pos = np.empty_like(sem_rank)
+            bm_pos = np.empty_like(bm_rank)
+            sem_pos[sem_rank] = np.arange(1, len(sem_rank) + 1)
+            bm_pos[bm_rank] = np.arange(1, len(bm_rank) + 1)
+            combined_scores = (1.0 / (k + sem_pos)) + (1.0 / (k + bm_pos))
+        else:
+            bm25_scores = _percentile_normalize(bm25_scores)
+            semantic_scores = _percentile_normalize(semantic_scores)
+            combined_scores = (1 - bm25_weight) * semantic_scores + bm25_weight * bm25_scores
         
         # Get top results
         top_indices = np.argsort(combined_scores)[::-1][:top_k]

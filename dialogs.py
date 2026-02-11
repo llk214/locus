@@ -9,6 +9,7 @@ an after() callback, then deiconify() once fully positioned.
 
 import customtkinter as ctk
 from tkinter import messagebox
+import tkinter as tk
 from fonts import ui_font
 from i18n import t
 
@@ -242,6 +243,27 @@ def show_manage_models_dialog(gui):
                                  command=make_download_cb()).grid(
                         row=0, column=2, padx=(4, 10), pady=8)
         
+        # Fusion method selector
+        fusion_frame = ctk.CTkFrame(dialog, corner_radius=6, fg_color="transparent")
+        fusion_frame.pack(fill="x", padx=15, pady=(0, 12))
+        fusion_frame.grid_columnconfigure(1, weight=1)
+        
+        ctk.CTkLabel(fusion_frame, text=t("fusion.label"), font=ui_font(11)).grid(
+            row=0, column=0, padx=(4, 8), pady=6, sticky="w")
+        
+        fusion_options = [t("fusion.percentile"), t("fusion.rrf")]
+        fusion_var = tk.StringVar(value=t("fusion.percentile") if gui.fusion_method == "percentile" else t("fusion.rrf"))
+        
+        def on_fusion_change(value):
+            gui.fusion_method = "rrf" if value == t("fusion.rrf") else "percentile"
+        
+        ctk.CTkOptionMenu(
+            fusion_frame, values=fusion_options, variable=fusion_var,
+            command=on_fusion_change, width=180, height=26, corner_radius=6,
+            fg_color=("gray75", "gray28"), button_color=("gray65", "gray35"),
+            button_hover_color=("gray55", "gray40"), font=ui_font(11)
+        ).grid(row=0, column=1, padx=(0, 4), pady=6, sticky="w")
+
         # Position and show
         dialog.geometry("480x420")
         dialog.update_idletasks()
