@@ -10,11 +10,12 @@ from i18n import t
 class ResultCard(ctk.CTkFrame):
     """A single result card with modern styling."""
     
-    def __init__(self, parent, rank, pdf_name, page_num, score, snippet, on_click, on_double_click):
+    def __init__(self, parent, rank, pdf_name, page_num, chunk_id, score, snippet, on_click, on_double_click):
         super().__init__(parent, corner_radius=8, fg_color=("gray90", "gray20"))
         
         self.pdf_name = pdf_name
         self.page_num = page_num
+        self.chunk_id = chunk_id
         self.snippet = snippet
         self.on_click = on_click
         self.on_double_click = on_double_click
@@ -38,7 +39,10 @@ class ResultCard(ctk.CTkFrame):
         ctk.CTkLabel(info_frame, text=pdf_name, font=ui_font(11, bold=True),
                      anchor="w").pack(side="left")
         
-        ctk.CTkLabel(info_frame, text=f"  📄 {t('results.page', num=page_num)}", font=ui_font(10),
+        page_text = t("results.page", num=page_num)
+        if chunk_id:
+            page_text = f"{page_text} · {t('results.chunk', num=chunk_id)}"
+        ctk.CTkLabel(info_frame, text=f"  📄 {page_text}", font=ui_font(10),
                      text_color="gray", anchor="w").pack(side="left")
         
         # Score badge

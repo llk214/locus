@@ -27,7 +27,8 @@ def show_rounded_popup(parent, anchor_widget, options, variable, on_select=None)
     popup = ctk.CTkToplevel(parent)
     popup.withdraw()
     popup.overrideredirect(True)
-    popup.attributes("-topmost", True)
+    popup.transient(parent)
+    popup.attributes("-topmost", False)
     parent._active_popup = popup
 
     def _build_and_show():
@@ -79,16 +80,33 @@ def show_rounded_popup(parent, anchor_widget, options, variable, on_select=None)
                 pass
 
         def bind_global_click():
-            parent.bind_all("<Button-1>", close_on_click, add="+")
+            # Store bind id so we can unbind only this handler.
+            popup._close_bind_id = parent.bind_all("<Button-1>", close_on_click, add="+")
+
+        def follow_parent(_e=None):
+            try:
+                ax = anchor_widget.winfo_rootx()
+                ay = anchor_widget.winfo_rooty() + anchor_widget.winfo_height() + 2
+                popup.geometry(f"+{ax}+{ay}")
+            except Exception:
+                pass
 
         def on_popup_destroy(e):
             try:
-                parent.unbind_all("<Button-1>")
+                bind_id = getattr(popup, "_close_bind_id", None)
+                if bind_id:
+                    parent.unbind_all("<Button-1>", bind_id)
+            except Exception:
+                pass
+            try:
+                parent.unbind("<Configure>", popup._follow_id)
             except Exception:
                 pass
 
         popup.after(100, bind_global_click)
+        popup._follow_id = parent.bind("<Configure>", follow_parent, add="+")
         popup.bind("<Destroy>", on_popup_destroy)
+        popup.bind("<FocusOut>", lambda _e: popup.destroy())
 
     popup.after(30, _build_and_show)
 

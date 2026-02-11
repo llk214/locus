@@ -115,7 +115,7 @@ class LocatorGUI(ctk.CTk):
         
         self.title(t("app.title"))
         self.geometry("900x650")
-        self.minsize(650, 500)
+        self.minsize(750, 500)
         
         # Auto-scale based on screen resolution
         screen_width = self.winfo_screenwidth()
@@ -130,12 +130,14 @@ class LocatorGUI(ctk.CTk):
         self.result_cards = []
         self.selected_card = None
         self._searching = False
+        self._last_index_hash = None
+        self._last_index_model = None
         
         # Track translatable widgets for language switching
         self._i18n_widgets = []
         
         self._create_widgets()
-    
+
     # ---- i18n helpers ----
     
     def _register_i18n(self, widget, method, key, font_size=None, font_bold=False, **kwargs):
@@ -162,7 +164,16 @@ class LocatorGUI(ctk.CTk):
         if hasattr(self, 'quality_menu'):
             self._rebuild_quality_menu()
             current_quality = self.quality_var.get()
-            self.quality_info_var.set(self.quality_ram.get(current_quality, ""))
+
+        if hasattr(self, 'ocr_quality_var'):
+            current = self.ocr_quality_var.get()
+            new_label = t("ocr.balanced")
+            for key in self.ocr_quality_options.keys():
+                if current == t(key):
+                    new_label = t(key)
+                    break
+            self.ocr_quality_var.set(new_label)
+            self._update_ocr_button_style()
         
         if hasattr(self, 'status_label'):
             self.status_label.configure(font=ui_font(11))
@@ -260,6 +271,7 @@ class LocatorGUI(ctk.CTk):
                       width=100, height=30, corner_radius=6,
                       fg_color="#28a745", hover_color="#218838")
         load_btn.grid(row=0, column=3, padx=(4, 4), pady=12)
+        self.load_btn = load_btn
         self._register_i18n(load_btn, "text", "dir.load_index")
         
         # ===== Status Label =====
@@ -291,10 +303,12 @@ class LocatorGUI(ctk.CTk):
         # ===== Options Frame =====
         options_frame = ctk.CTkFrame(self, corner_radius=8)
         options_frame.grid(row=3, column=0, padx=12, pady=2, sticky="ew")
+        self.options_frame = options_frame
         
         # Right side FIRST - Search Mode Slider
         right_options = ctk.CTkFrame(options_frame, fg_color="transparent")
         right_options.pack(side="right", padx=12, pady=8)
+        self.right_options = right_options
         
         semantic_label = ctk.CTkLabel(right_options, text=t("options.semantic"), font=ui_font(10))
         semantic_label.pack(side="left", padx=(0, 8))
@@ -312,7 +326,8 @@ class LocatorGUI(ctk.CTk):
         
         # Left side - Results count and Quality
         left_options = ctk.CTkFrame(options_frame, fg_color="transparent")
-        left_options.pack(side="left", padx=12, pady=8)
+        left_options.pack(side="left", padx=12, pady=8, fill="x", expand=True)
+        self.left_options = left_options
         
         results_label = ctk.CTkLabel(left_options, text=t("options.results"), font=ui_font(11))
         results_label.pack(side="left", padx=(0, 4))
@@ -321,13 +336,37 @@ class LocatorGUI(ctk.CTk):
         self.topk_var = tk.StringVar(value="5")
         self.topk_btn = ctk.CTkButton(
             left_options, textvariable=self.topk_var,
-            width=60, height=26, corner_radius=6,
+            width=36, height=26, corner_radius=6,
             fg_color=("gray75", "gray28"),
             hover_color=("gray65", "gray35"),
             font=ui_font(11),
             command=self._show_topk_popup
         )
         self.topk_btn.pack(side="left", padx=(0, 16))
+
+        # OCR mode selector (Off/Fast/Balanced/Best)
+        ocr_label = ctk.CTkLabel(left_options, text=t("options.ocr_mode"), font=ui_font(11))
+        ocr_label.pack(side="left", padx=(0, 4))
+        self._register_i18n(ocr_label, "text", "options.ocr_mode", font_size=11)
+
+        self.ocr_quality_options = {
+            "ocr.off": None,
+            "ocr.fast": 150,
+            "ocr.balanced": 200,
+            "ocr.best": 260,
+        }
+        self.ocr_quality_var = tk.StringVar(value=t("ocr.off"))
+        self.ocr_quality_btn = ctk.CTkButton(
+            left_options, textvariable=self.ocr_quality_var,
+            width=70, height=26, corner_radius=6,
+            fg_color=("gray75", "gray28"),
+            hover_color=("gray65", "gray35"),
+            font=ui_font(11),
+            command=self._show_ocr_quality_popup
+        )
+        self.ocr_quality_btn.pack(side="left", padx=(0, 8))
+        self._update_ocr_button_style()
+        self.options_frame.bind("<Configure>", self._update_options_layout)
         
         quality_label = ctk.CTkLabel(left_options, text=t("options.quality"), font=ui_font(11))
         quality_label.pack(side="left", padx=(0, 4))
@@ -342,7 +381,7 @@ class LocatorGUI(ctk.CTk):
         self.quality_var = tk.StringVar(value=list(self.quality_options.keys())[0])
         self.quality_btn = ctk.CTkButton(
             left_options, textvariable=self.quality_var,
-            width=155, height=26, corner_radius=6,
+            width=120, height=26, corner_radius=6,
             fg_color=("gray75", "gray28"),
             hover_color=("gray65", "gray35"),
             font=ui_font(11),
@@ -351,30 +390,15 @@ class LocatorGUI(ctk.CTk):
         self.quality_btn.pack(side="left", padx=(0, 8))
         self.quality_menu = self.quality_btn
         
-        # Download status label
-        self.quality_status_var = tk.StringVar(value="")
-        self.quality_status_label = ctk.CTkLabel(left_options, textvariable=self.quality_status_var, 
-                                                  font=ui_font(9))
-        self.quality_status_label.pack(side="left", padx=(0, 4))
-        
-        first_label = list(self.quality_options.keys())[0]
-        self.quality_info_var = tk.StringVar(value=self.quality_ram.get(first_label, ""))
-        ctk.CTkLabel(left_options, textvariable=self.quality_info_var, 
-                     font=ui_font(9), text_color="gray").pack(side="left")
-        
-        # Download/Delete button
-        self.model_action_btn = ctk.CTkButton(left_options, text="⬇️", command=self._download_model,
-                      width=28, height=24, corner_radius=4,
-                      fg_color="transparent", hover_color=("gray80", "gray30"),
-                      text_color=("gray40", "gray60"))
-        self.model_action_btn.pack(side="left", padx=(4, 0))
-        
         # Manage models button
-        ctk.CTkButton(left_options, text="⚙️", command=self._manage_models,
-                      width=28, height=24, corner_radius=4,
-                      fg_color="transparent", hover_color=("gray80", "gray30"),
-                      text_color=("gray40", "gray60")).pack(side="left", padx=(2, 0))
-        
+        ctk.CTkButton(
+            left_options, text="⚙️", command=self._manage_models,
+            width=28, height=24, corner_radius=4,
+            fg_color="transparent", hover_color=("gray80", "gray30"),
+            text_color=("gray40", "gray60"), anchor="center",
+            font=emoji_font(12)
+        ).pack(side="left", padx=(2, 0))
+
         # Check initial model status
         self._update_model_status()
         
@@ -436,21 +460,114 @@ class LocatorGUI(ctk.CTk):
             self.quality_var,
             on_select=self._on_quality_change
         )
+
+    def _show_ocr_quality_popup(self):
+        show_rounded_popup(
+            self, self.ocr_quality_btn,
+            [t(k) for k in self.ocr_quality_options.keys()],
+            self.ocr_quality_var,
+            on_select=lambda _v: self._update_ocr_button_style()
+        )
+
+    def _update_ocr_button_style(self):
+        if self.ocr_quality_var.get() == t("ocr.off"):
+            self.ocr_quality_btn.configure(
+                fg_color=("gray82", "gray18"),
+                text_color=("gray50", "gray55")
+            )
+        else:
+            self.ocr_quality_btn.configure(
+                fg_color=("gray75", "gray28"),
+                text_color=("gray10", "gray90")
+            )
+
+    def _get_ocr_dpi(self) -> int:
+        selected = self.ocr_quality_var.get()
+        for key, dpi in self.ocr_quality_options.items():
+            if selected == t(key):
+                return dpi or 200
+        return 200
+
+    def _update_options_layout(self, _event=None):
+        width = self.options_frame.winfo_width()
+        if width <= 620:
+            self.topk_btn.configure(width=36)
+        elif width <= 720:
+            self.topk_btn.configure(width=44)
+        else:
+            self.topk_btn.configure(width=48)
     
     # ---- Directory / quality actions ----
     
+    def _compute_pdf_hash(self, pdf_dir: Path) -> str | None:
+        try:
+            import hashlib
+            h = hashlib.sha1()
+            pdf_files = sorted(pdf_dir.glob("*.pdf"))
+            for p in pdf_files:
+                try:
+                    stat = p.stat()
+                    h.update(p.name.encode("utf-8"))
+                    h.update(str(stat.st_size).encode("utf-8"))
+                    h.update(str(stat.st_mtime).encode("utf-8"))
+                except OSError:
+                    continue
+            return h.hexdigest()
+        except Exception:
+            return None
+
+    def _update_index_button_label(self):
+        if not hasattr(self, "load_btn"):
+            return
+        if self._indexing:
+            self.load_btn.configure(
+                text=t("dir.cancel"),
+                command=self._cancel_index,
+                fg_color="#dc3545",
+                hover_color="#c82333",
+                text_color="white"
+            )
+            return
+        pdf_dir = self.dir_entry.get()
+        if not pdf_dir or not Path(pdf_dir).exists():
+            self.load_btn.configure(
+                text=t("dir.load_index"),
+                command=self._load_index,
+                fg_color="#28a745",
+                hover_color="#218838",
+                text_color="white"
+            )
+            return
+        current_quality = self.quality_var.get()
+        model_name = self.quality_options.get(current_quality)
+        current_hash = self._compute_pdf_hash(Path(pdf_dir))
+        needs_reindex = False
+        if self._last_index_hash and current_hash and self._last_index_hash != current_hash:
+            needs_reindex = True
+        if self._last_index_model and model_name and self._last_index_model != model_name:
+            needs_reindex = True
+        label_key = "dir.reindex" if needs_reindex else "dir.load_index"
+        self.load_btn.configure(
+            text=t(label_key),
+            command=self._load_index,
+            fg_color="#28a745",
+            hover_color="#218838",
+            text_color="white"
+        )
+
     def _browse_dir(self):
         directory = filedialog.askdirectory()
         if directory:
             self.dir_entry.delete(0, tk.END)
             self.dir_entry.insert(0, directory)
+            self._update_index_button_label()
     
     def _on_quality_change(self, choice):
-        self.quality_info_var.set(self.quality_ram.get(choice, ""))
         self._update_model_status()
         
         if self.locator:
             self.status_var.set(t("status.quality_changed"))
+        self._update_index_button_label()
     
     # ---- Model management (delegates to model_manager module) ----
     
@@ -467,26 +584,9 @@ class LocatorGUI(ctk.CTk):
         return model_manager.delete_model(model_name)
     
     def _update_model_status(self):
-        quality = self.quality_var.get()
-        model_name = self.quality_options.get(quality)
-        size = self.quality_sizes.get(quality, "")
-        
-        is_bundled = self._is_bundled_model(model_name) if model_name else False
-        
-        if model_name and self._is_model_downloaded(model_name):
-            if is_bundled:
-                self.quality_status_var.set("📦")
-                self.quality_status_label.configure(text_color="blue")
-                self.model_action_btn.configure(text="📦", command=lambda: None, state="disabled")
-            else:
-                self.quality_status_var.set("✅")
-                self.quality_status_label.configure(text_color="green")
-                self.model_action_btn.configure(text="🗑️", command=self._delete_current_model, state="normal")
-        else:
-            self.quality_status_var.set(f"⬇️ {size}")
-            self.quality_status_label.configure(text_color="orange")
-            self.model_action_btn.configure(text="⬇️", command=self._download_model, state="normal")
-    
+        # Simplified UI: no status widgets to update
+        return
+
     def _delete_current_model(self):
         quality = self.quality_var.get()
         model_name = self.quality_options.get(quality)
@@ -559,6 +659,12 @@ class LocatorGUI(ctk.CTk):
     
     # ---- Index loading ----
     
+    def _cancel_index(self):
+        if self._index_cancel:
+            self._index_cancel.set()
+            self.status_var.set(t("status.canceling"))
+            self._update_index_button_label()
+
     def _load_index(self):
         pdf_dir = self.dir_entry.get()
         if not pdf_dir or not Path(pdf_dir).exists():
@@ -568,9 +674,14 @@ class LocatorGUI(ctk.CTk):
         quality = self.quality_var.get()
         model_name = self.quality_options.get(quality)
         
-        if not self._is_model_downloaded(model_name):
-            messagebox.showwarning(t("dialog.model_required"), 
-                t("dialog.download_model_first", quality=quality))
+        ok, _err = model_manager.verify_model_available(model_name)
+        if not ok:
+            should_open = messagebox.askyesno(
+                t("dialog.download_model_first_title"),
+                t("dialog.download_model_first", quality=quality)
+            )
+            if should_open:
+                self._manage_models()
             return
         
         self._show_index_mode_dialog(pdf_dir, model_name, quality)
@@ -579,10 +690,18 @@ class LocatorGUI(ctk.CTk):
         show_index_mode_dialog(self, pdf_dir, model_name, quality)
     
     def _do_load_index(self, pdf_dir, model_name, quality, precompute=False):
+        self._index_cancel = threading.Event()
+        self._indexing = True
+        self._update_index_button_label()
         def update_progress(current, total):
             percent = int(current / total * 100)
             self.after(0, lambda: self.status_var.set(
                 t("status.deep_indexing", current=current, total=total, percent=percent)
+            ))
+
+        def update_ocr_progress(pdf_name, page_num, total_pages):
+            self.after(0, lambda: self.status_var.set(
+                t("status.ocr_progress", name=pdf_name, page=page_num, total=total_pages)
             ))
         
         def load():
@@ -592,15 +711,22 @@ class LocatorGUI(ctk.CTk):
                 
                 if precompute:
                     self.after(0, lambda: self.status_var.set(t("status.step2_deep")))
-                    self.locator.build_index()
+                    ocr_mode = "off" if self.ocr_quality_var.get() == t("ocr.off") else "deep"
+                    ocr_dpi = self._get_ocr_dpi()
+                    self.locator.build_index(ocr_mode=ocr_mode, ocr_progress_callback=update_ocr_progress,
+                                             ocr_dpi=ocr_dpi, cancel_event=self._index_cancel)
                     page_count = len(self.locator.documents)
                     self.after(0, lambda: self.status_var.set(
                         t("status.step3_deep", current=0, total=page_count)
                     ))
-                    self.locator.precompute_embeddings(progress_callback=update_progress)
+                    self.locator.precompute_embeddings(progress_callback=update_progress,
+                                                    cancel_event=self._index_cancel)
                 else:
                     self.after(0, lambda: self.status_var.set(t("status.step2_indexing")))
-                    self.locator.build_index()
+                    ocr_mode = "off" if self.ocr_quality_var.get() == t("ocr.off") else "fast"
+                    ocr_dpi = self._get_ocr_dpi()
+                    self.locator.build_index(ocr_mode=ocr_mode, ocr_progress_callback=update_ocr_progress,
+                                             ocr_dpi=ocr_dpi, cancel_event=self._index_cancel)
                 
                 self.pdf_dir = pdf_dir
                 page_count = len(self.locator.documents)
@@ -609,10 +735,22 @@ class LocatorGUI(ctk.CTk):
                 self.after(0, lambda: self.status_var.set(
                     t("status.ready_indexed", count=page_count, mode=mode)
                 ))
+                self._indexing = False
+                current_hash = self._compute_pdf_hash(Path(pdf_dir))
+                self._last_index_hash = current_hash
+                self._last_index_model = model_name
+                self.after(0, self._update_index_button_label)
                     
             except Exception as e:
-                self.status_var.set(t("status.error", msg=str(e)))
-                messagebox.showerror(t("dialog.error"), str(e))
+                err = str(e)
+                if "Indexing canceled" in err:
+                    self._indexing = False
+                    self.after(0, lambda: self.status_var.set(t("status.canceled")))
+                    self.after(0, self._update_index_button_label)
+                    return
+                self._indexing = False
+                self.after(0, lambda: self.status_var.set(t("status.error", msg=err)))
+                self.after(0, lambda: messagebox.showerror(t("dialog.error"), err))
         
         self.status_var.set(t("status.loading"))
         thread = threading.Thread(target=load)
@@ -703,6 +841,7 @@ class LocatorGUI(ctk.CTk):
                 rank=i,
                 pdf_name=r['pdf_name'],
                 page_num=r['page_num'],
+                chunk_id=r.get('chunk_id', 0),
                 score=r['score'],
                 snippet=r['snippet'],
                 on_click=self._on_card_click,

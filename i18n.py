@@ -103,6 +103,14 @@ _STRINGS = {
         "en": "Load Index",
         "zh": "加载索引",
     },
+    "dir.reindex": {
+        "en": "Rebuild Index",
+        "zh": "重新索引",
+    },
+    "dir.cancel": {
+        "en": "Cancel",
+        "zh": "取消",
+    },
 
     # ===== Status =====
     "status.select_dir": {
@@ -112,6 +120,14 @@ _STRINGS = {
     "status.loading": {
         "en": "Loading...",
         "zh": "加载中...",
+    },
+    "status.canceling": {
+        "en": "Canceling...",
+        "zh": "正在取消...",
+    },
+    "status.canceled": {
+        "en": "Canceled",
+        "zh": "已取消",
     },
     "status.step1_model": {
         "en": "Step 1/2: Loading model...",
@@ -136,6 +152,10 @@ _STRINGS = {
     "status.deep_indexing": {
         "en": "🔬 Deep indexing: {current}/{total} pages ({percent}%)",
         "zh": "🔬 深度索引中：{current}/{total} 页 ({percent}%)",
+    },
+    "status.ocr_progress": {
+        "en": "OCR: {name} p{page}/{total}",
+        "zh": "OCR：{name} 第 {page}/{total} 页",
     },
     "status.ready_indexed": {
         "en": "✅ Ready! Indexed {count} pages ({mode} mode)",
@@ -241,9 +261,29 @@ _STRINGS = {
         "en": "Results:",
         "zh": "结果数：",
     },
+    "options.ocr_mode": {
+        "en": "OCR:",
+        "zh": "文字识别：",
+    },
+    "ocr.off": {
+        "en": "Off",
+        "zh": "关闭",
+    },
+    "ocr.fast": {
+        "en": "Fast",
+        "zh": "快速",
+    },
+    "ocr.balanced": {
+        "en": "Balanced",
+        "zh": "均衡",
+    },
+    "ocr.best": {
+        "en": "Best",
+        "zh": "最佳",
+    },
     "options.quality": {
-        "en": "Quality:",
-        "zh": "质量：",
+        "en": "Search Quality:",
+        "zh": "搜索质量：",
     },
 
     # ===== Quality Options =====
@@ -290,6 +330,10 @@ _STRINGS = {
     "results.page": {
         "en": "Page {num}",
         "zh": "第 {num} 页",
+    },
+    "results.chunk": {
+        "en": "Chunk {num}",
+        "zh": "分块 {num}",
     },
 
     # ===== Bottom Frame =====
@@ -339,9 +383,13 @@ _STRINGS = {
         "en": "Model Required",
         "zh": "需要模型",
     },
+    "dialog.download_model_first_title": {
+        "en": "Download Model",
+        "zh": "下载模型",
+    },
     "dialog.download_model_first": {
-        "en": "Please download the {quality} model first.\nClick the ⬇️ button next to the quality selector.",
-        "zh": "请先下载 {quality} 模型。\n点击质量选择器旁的 ⬇️ 按钮。",
+        "en": "The {quality} model is not downloaded or incomplete. Open the Manage Models window to download it?",
+        "zh": "{quality} 模型尚未下载或不完整，是否打开「管理模型」窗口进行下载？",
     },
 
     # ===== Index Mode Dialog =====

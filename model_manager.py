@@ -93,6 +93,36 @@ def is_model_downloaded(model_name):
     return False
 
 
+def verify_model_available(model_name):
+    """Verify model is available locally without triggering a download."""
+    if is_bundled_model(model_name) and get_bundled_model_path():
+        return True, None
+
+    try:
+        from fastembed import TextEmbedding
+    except Exception as e:
+        return False, str(e)
+
+    cache_dir = os.environ.get("FASTEMBED_CACHE_PATH")
+    old_offline = os.environ.get("HF_HUB_OFFLINE")
+    os.environ["HF_HUB_OFFLINE"] = "1"
+    try:
+        try:
+            model = TextEmbedding(model_name=model_name, cache_dir=cache_dir, local_files_only=True)
+        except TypeError:
+            model = TextEmbedding(model_name=model_name, cache_dir=cache_dir)
+        # This will raise if files are missing
+        list(model.embed(["test"]))
+        return True, None
+    except Exception as e:
+        return False, str(e)
+    finally:
+        if old_offline is None:
+            os.environ.pop("HF_HUB_OFFLINE", None)
+        else:
+            os.environ["HF_HUB_OFFLINE"] = old_offline
+
+
 def get_model_cache_size(model_name):
     """Get cached model size in MB."""
     total_size = 0
@@ -104,7 +134,7 @@ def get_model_cache_size(model_name):
         
         try:
             for folder in os.listdir(cache_dir):
-                if model_short in folder:
+                if model_short in folder or model_short.replace("-", "_") in folder:
                     folder_path = os.path.join(cache_dir, folder)
                     if os.path.isdir(folder_path):
                         for dirpath, dirnames, filenames in os.walk(folder_path):
