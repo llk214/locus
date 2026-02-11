@@ -1,10 +1,52 @@
 """
 Internationalization (i18n) module for Locus PDF Search.
 Supports Chinese (Simplified) and English with runtime switching.
+Language preference is persisted to disk.
 """
 
-# Default language
-_current_lang = "zh"
+import os
+import sys
+from pathlib import Path
+
+# ---- Preference file location ----
+
+def _get_config_dir() -> str:
+    """Get the Locus config directory."""
+    home = str(Path.home())
+    if os.name == "nt":
+        base = os.environ.get("LOCALAPPDATA") or home
+        return os.path.join(base, "Locus")
+    if sys.platform == "darwin":
+        return os.path.join(home, "Library", "Preferences", "Locus")
+    return os.path.join(home, ".config", "Locus")
+
+_LANG_FILE = os.path.join(_get_config_dir(), "language.txt")
+
+
+def _load_saved_lang() -> str:
+    """Load saved language from disk, default to 'en'."""
+    try:
+        with open(_LANG_FILE, "r", encoding="utf-8") as f:
+            lang = f.read().strip()
+            if lang in ("en", "zh"):
+                return lang
+    except (FileNotFoundError, OSError):
+        pass
+    return "en"
+
+
+def _save_lang(lang: str):
+    """Save language preference to disk."""
+    try:
+        os.makedirs(os.path.dirname(_LANG_FILE), exist_ok=True)
+        with open(_LANG_FILE, "w", encoding="utf-8") as f:
+            f.write(lang)
+    except OSError:
+        pass
+
+
+# Default language — loaded from saved preference, falls back to English
+_current_lang = _load_saved_lang()
 
 # Translation dictionary: key -> {lang_code: text}
 _STRINGS = {
@@ -398,10 +440,11 @@ def get_lang() -> str:
 
 
 def set_lang(lang: str):
-    """Set current language ('en' or 'zh')."""
+    """Set current language ('en' or 'zh') and save preference."""
     global _current_lang
     if lang in ("en", "zh"):
         _current_lang = lang
+        _save_lang(lang)
 
 
 def t(key: str, **kwargs) -> str:

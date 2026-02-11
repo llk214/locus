@@ -47,7 +47,9 @@ from i18n import t, get_lang, set_lang
 from fonts import ui_font, mono_font, emoji_font
 from splash import SplashScreen
 
-# ===== Show splash immediately =====
+# ===== Show splash immediately (always in English) =====
+_user_lang = get_lang()
+set_lang("en")
 splash = SplashScreen()
 splash.set_status(t("splash.loading_libs"), 10)
 
@@ -68,6 +70,9 @@ from widgets import ResultCard
 from dialogs import show_rounded_popup, show_manage_models_dialog, show_index_mode_dialog
 import model_manager
 
+# Restore user's saved language for the main UI
+set_lang(_user_lang)
+
 # Set appearance
 ctk.set_appearance_mode("system")
 ctk.set_default_color_theme("blue")
@@ -84,7 +89,7 @@ class LocatorGUI(ctk.CTk):
         ("quality.best",         "BAAI/bge-large-en-v1.5",  "1.2GB",    "16GB RAM",  "en"),
         ("quality.balanced",     "BAAI/bge-small-zh-v1.5",  "90MB",     "4GB RAM",   "zh"),
         ("quality.best",         "BAAI/bge-large-zh-v1.5",  "1.2GB",    "16GB RAM",  "zh"),
-        ("quality.multilingual", "BAAI/bge-m3",             "2.2GB",    "16GB+ RAM", "multi"),
+        ("quality.multilingual", "intfloat/multilingual-e5-large",  "1.1GB",    "8GB RAM",   "multi"),
     ]
     
     @staticmethod
@@ -186,11 +191,35 @@ class LocatorGUI(ctk.CTk):
         self.quality_var.set(new_display)
         self._update_model_status()
     
+    def _show_overlay(self, text, callback, duration_ms=150):
+        """Show a brief overlay message, run callback while covered, then remove overlay."""
+        overlay = ctk.CTkFrame(self, fg_color=("gray85", "gray17"), corner_radius=0)
+        overlay.place(relx=0, rely=0, relwidth=1, relheight=1)
+        
+        ctk.CTkLabel(overlay, text=text, font=ui_font(14),
+                     text_color=("gray40", "gray70")).place(relx=0.5, rely=0.5, anchor="center")
+        
+        overlay.lift()
+        self.update_idletasks()
+        
+        def do_work():
+            callback()
+            self.update_idletasks()
+            self.after(duration_ms, lambda: overlay.destroy())
+        
+        self.after(50, do_work)
+    
     def _toggle_language(self):
         current = get_lang()
         new_lang = "en" if current == "zh" else "zh"
-        set_lang(new_lang)
-        self._refresh_i18n()
+        # Show overlay in the TARGET language
+        label = "Switching language..." if new_lang == "en" else "正在切换语言..."
+        
+        def do_switch():
+            set_lang(new_lang)
+            self._refresh_i18n()
+        
+        self._show_overlay(label, do_switch)
     
     # ---- Widget creation ----
     

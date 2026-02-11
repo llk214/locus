@@ -194,8 +194,6 @@ MODEL_NAME_MAP = {
     "BAAI/bge-small-zh-v1.5": "BAAI/bge-small-zh-v1.5",
     "BAAI/bge-large-zh-v1.5": "BAAI/bge-large-zh-v1.5",
     # Multilingual
-    "BAAI/bge-m3": "BAAI/bge-m3",
-    # Legacy (kept for backward compatibility)
     "intfloat/multilingual-e5-large": "intfloat/multilingual-e5-large",
 }
 
@@ -430,7 +428,6 @@ class HybridLocator:
         is_multilingual_model = self.model_name and (
             "multilingual" in self.model_name.lower() 
             or "e5" in self.model_name.lower()
-            or "bge-m3" in self.model_name.lower()
             or "zh" in self.model_name.lower()
             or "chinese" in self.model_name.lower()
         )
